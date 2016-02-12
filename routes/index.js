@@ -448,5 +448,53 @@ router.patch(/\/service\/uuid\/([a-zA-Z0-9\-]+)\/heartbeat\/?$/, function (req, 
     }
 });
 
+/*
+    Get the endpoints for the given service name or tag
+*/
+router.get(/\/service\/(name|tag)\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, next) {
+    var uuids = [];
+    var selector = req.params[0];
+    var id = req.params[1];
+    var resultSelector = "";
+    
+    if (selector === "name") {
+        if (_.has(SERVICE_TO_UUID, id)) {
+            uuids = SERVICE_TO_UUID[id];
+        }
+        resultSelector = "service";
+    }
+    else if (selector === "tag") {
+        if (_.has(TAG_TO_UUID, id)) {
+            uuids = TAG_TO_UUID[id];
+        }
+        resultSelector = "tag";
+    }
+    
+    var endpoints = _.map(uuids,
+        function (uuid) {
+            var serviceObject = UUID_TO_CONFIG[uuid];
+            return {
+                "uuid": serviceObject.uuid,
+                "endpoints": serviceObject.endpoint
+            }
+        } 
+    );
+    
+    // build the result format
+    var results = {
+        endpoints: endpoints
+    };
+    results[resultSelector] = id;
+    
+    res.json({error: false, results:results});
+});
+
+router.get(/\/service\/uuid\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, next) {
+    
+});
+
+router.get(/\/service\/all\/?$/, function (req, res, next) {
+    
+});
 
 module.exports = router;
