@@ -296,7 +296,7 @@ function notifyForService(LISTENER_GROUP, serviceId, finish) {
                 request(fullWebhook,
                     function (err, res, body) {
                         if (err) {
-                            console.log("Error with webhook [%s] code %d", err, res.statusCode);
+                            console.log("\tError with webhook [%s] code %d", err, res.statusCode);
                         }
                         next(null, fullWebhook);
                     }
@@ -304,10 +304,14 @@ function notifyForService(LISTENER_GROUP, serviceId, finish) {
             },
             
             function (err, results) {
-                console.log("Pinged %d webhooks for service id [%s]", results.length, serviceId);
+                console.log("\tPinged %d webhooks for service id [%s]", results.length, serviceId);
                 finish();
             }
         )
+    }
+    else {
+        console.log("\tNo webhooks exist for service id [%s]", serviceId);
+        finish();
     }
 }
 
@@ -331,7 +335,7 @@ function notifyForAll(finish) {
             request(fullWebhook,
                 function (err, res, body) {
                     if (err) {
-                        console.log("Error with webhook [%s] code %d", err, res.statusCode);
+                        console.log("\tError with webhook [%s] code %d", err, res.statusCode);
                     }
                     next(null, fullWebhook);
                 }
@@ -340,7 +344,7 @@ function notifyForAll(finish) {
         },
         
         function (err, results) {
-            console.log("Pinged %d listeners for an ALL change", results.length);
+            console.log("\tPinged %d listeners for an ALL change", results.length);
             finish();
         }
     )
@@ -353,8 +357,6 @@ function notifyForAll(finish) {
 router.put("/register", function (req, res, next) {
     var configBlob = req.body;
     var serviceUUID = uuid.v4();
-    console.log("config blob raw");
-    console.log(configBlob);
     
     console.log("REGISTER\n\tservice: %s\n\tendpiont: %s\n\ttags: %s", configBlob.service, configBlob.endpoint, configBlob.tags.join(","))
     console.log("\tuuid: %s", serviceUUID);
