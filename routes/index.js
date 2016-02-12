@@ -175,18 +175,129 @@ var LISTENERS_BY_NAME = {};
 // Listeners that register for all events
 var LISTENERS_ALL = [];
 
-/*
-    Register a new service listener as a name or tag based listener
-*/
-router.put(/\/listen\/service\/(name|tag)\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, next) {
+// What's our default TTL between expected heartbeats for a service? This determines the
+// age between heartbeats at which a non-responding service will be reaped.
+var DEFAULT_SERVICE_TTL = 60;
+
+// milliseconds between reaping
+var REAP_FREQUENCY = 60 * 1000;
+
+// Trigger the update and reap series
+function updateAndReap() {
+    updateServices();
+    reapServices(
+        function () {
+            setTimeout(updateAndReap, REAP_FREQUENCY);
+        }
+    );    
+}
+setTimeout(updateAndReap, REAP_FREQUENCY);
+
+function updateServices() {
     
+    // update all the service records with a new AGE and HEARTBEAT
+    _.each(UUID_TO_CONFIG,
+        function (config) {
+            
+            var newNow = Date.now();
+            
+            // update the heartbeat
+            config.heartbeat = (newNow - config.lastHeartbeat) / 1000.0;
+            
+            // update the age
+            config.age = (newNow - config.created) / 1000.0;
+            
+        }
+    );
+}
+
+function reapServices(next) {
+    
+    console.log("REAP//starting");
+    
+    // select any uuids that need reaping
+    var reapUUIDs = _.map(
+        _.filter(_.values(UUID_TO_CONFIG),
+            function (serviceObject) {
+                return serviceObject.heartbeat > serviceObject.ttl;
+            }
+        ), 
+        
+        function (serviceObject) {
+            return serviceObject.uuid;    
+        }
+    );
+    
+    console.log("\tFound %d services that need reaping", reapUUIDs.length);
+    console.log(reapUUIDs);
+    
+    // reap the services by UUID, keeping the resulting objects so we 
+    // can run notifications
+    var reapObjects = _.map(
+        reapUUIDs,
+        
+        function (reapUUID) {
+            return reapService(reapUUID);
+        }
+    );
+    
+    async.map(
+        reapObjects,
+        
+        function (serviceObject, callback) {
+            console.log("\treaping [%s]", serviceObject.uuid);
+            notifyByObject(serviceObject,
+                function (err, msg) {
+                    callback(null, serviceObject.uuid);
+                }
+            )
+        },
+        
+        function (err, results) {
+            console.log("REAP//complete");
+            next();
+        }
+    )
+}
+
+/*
+    Reap the service, returning the service details
+*/
+function reapService(serviceUUID) {
+    if (_.has(UUID_TO_CONFIG, serviceUUID)) {
+        // grab the service details
+        var serviceName = UUID_TO_CONFIG[serviceUUID].service;
+        var serviceTags = UUID_TO_CONFIG[serviceUUID].tags;
+        
+        // unlink the mappings
+        SERVICE_TO_UUID[serviceName] = _.without(SERVICE_TO_UUID[serviceName], serviceUUID);
+        _.each(serviceTags, function (tag) {
+            TAG_TO_UUID[tag] = _.without(TAG_TO_UUID[tag], serviceUUID);
+        })
+        
+        // remove the top level config
+        var configBlob = UUID_TO_CONFIG[serviceUUID];
+        delete UUID_TO_CONFIG[serviceUUID];
+        
+        return configBlob;
+    }
+    else {
+        return {};
+    }
+}
+     
+/*    
+    ster a new service listener as a name or tag based listener
+*/    
+router.put(/\/listen\/service\/(name|tag)\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, next) {
+        
     var selector = req.params[0];
     var id = req.params[1];
     var hook = req.body.webhook;
     
     if (selector === "name") {
-        if (!_.has(LISTENERS_BY_NAME, id)) {
-            LISTENERS_BY_NAME[id] = [];
+    if (!_.has(LISTENERS_BY_NAME, id)) {
+        LISTENERS_BY_NAME[id] = [];
         }
         LISTENERS_BY_NAME[id].push(hook);
     }
@@ -358,12 +469,18 @@ router.put("/register", function (req, res, next) {
     var configBlob = req.body;
     var serviceUUID = uuid.v4();
     
-    console.log("REGISTER\n\tservice: %s\n\tendpiont: %s\n\ttags: %s", configBlob.service, configBlob.endpoint, configBlob.tags.join(","))
-    console.log("\tuuid: %s", serviceUUID);
     
     // setup the various time trackers
     configBlob.created = Date.now();
-    configBlob.heartbeat = Date.now();
+    configBlob.lastHeartbeat = Date.now();
+    configBlob.age = 0;
+    configBlob.heartbeat = 0;
+    configBlob.ttl = parseInt(configBlob.ttl) || DEFAULT_SERVICE_TTL;
+    configBlob.uuid = serviceUUID;
+
+    console.log("REGISTER\n\tservice: %s\n\tendpoint: %s\n\ttags: %s", configBlob.service, configBlob.endpoint, configBlob.tags.join(","))
+    console.log("\tTTL: %d", configBlob.ttl);
+    console.log("\tuuid: %s", serviceUUID);
     
     // assign to the config structure
     UUID_TO_CONFIG[serviceUUID] = configBlob;
@@ -400,19 +517,9 @@ router.delete(/\/service\/uuid\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, next)
     var serviceUUID = req.params[0];
     
     if (_.has(UUID_TO_CONFIG, serviceUUID)) {
-        // grab the service details
-        var serviceName = UUID_TO_CONFIG[serviceUUID].service;
-        var serviceTags = UUID_TO_CONFIG[serviceUUID].tags;
-        
-        // unlink the mappings
-        SERVICE_TO_UUID[serviceName] = _.without(SERVICE_TO_UUID[serviceName], serviceUUID);
-        _.each(serviceTags, function (tag) {
-            TAG_TO_UUID[tag] = _.without(TAG_TO_UUID[tag], serviceUUID);
-        })
         
         // remove the top level config
-        var configBlob = UUID_TO_CONFIG[serviceUUID];
-        delete UUID_TO_CONFIG[serviceUUID];
+        var configBlob = reapService(serviceUUID);
         
         // Send notifications
         notifyByObject(configBlob,
@@ -439,7 +546,7 @@ router.patch(/\/service\/uuid\/([a-zA-Z0-9\-]+)\/heartbeat\/?$/, function (req, 
     
     if (_.has(UUID_TO_CONFIG, serviceUUID)) {
         // update the most recent heartbeat
-        UUID_TO_CONFIG[serviceUUID].heartbeat = Date.now();
+        UUID_TO_CONFIG[serviceUUID].lastHeartbeat = Date.now();
         
         res.json({error: false, msg: "ok"});
     }
@@ -489,8 +596,20 @@ router.get(/\/service\/(name|tag)\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, ne
     res.json({error: false, results:results});
 });
 
+/*
+    Get the entire config detail for a given service UUID
+*/
 router.get(/\/service\/uuid\/([a-zA-Z0-9\-]+)\/?$/, function (req, res, next) {
     
+    var serviceUUID = req.params[0];
+    
+    if (_.has(UUID_TO_CONFIG, serviceUUID)) {
+        var serviceObject = UUID_TO_CONFIG[serviceUUID];
+        
+    }
+    else {
+        res.json({error: true, msg: "No such service UUID has been registered"});
+    }
 });
 
 router.get(/\/service\/all\/?$/, function (req, res, next) {
