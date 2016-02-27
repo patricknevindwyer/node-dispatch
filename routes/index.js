@@ -187,11 +187,26 @@ function updateAndReap() {
     updateServices();
     reapServices(
         function () {
+            displayServices();
             setTimeout(updateAndReap, REAP_FREQUENCY);
         }
     );    
 }
 setTimeout(updateAndReap, REAP_FREQUENCY);
+
+function displayServices() {
+    // dump the current set of services to the console
+    _.each(SERVICE_TO_UUID,
+        function (val, key) {
+            console.log("== %s", key);
+            _.each(UUID_TO_CONFIG[val],
+                function (cval, ckey) {
+                    console.log("\t%s: %s", ckey, cval);
+                }
+            );
+        }
+    );    
+}
 
 function updateServices() {
     
